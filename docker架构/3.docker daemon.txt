@@ -1,0 +1,121 @@
+1. main daemon
+   功能的角度来说，mainDaemon()实现了两部分内容：
+      第一，创建Docker运行环境；
+	  第二，服务于Docker Client，接收并处理相应请求。
+
+   daemon的配置初始化（这部分在init()函数中实现，即在mainDaemon()运行前就执行
+		daemonCfg = &daemon.Config{}
+		daemonCfg.InstallFlags()
+   命令行flag参数检查
+        if flag.NArg() != 0 {
+		   flag.Usage()
+		   return
+	    }
+   创建engine对象
+	   eng := engine.New()	   
+       Engine扮演着Docker container存储仓库的角色，并且通过job的形式来管理这些容器
+	   type Engine struct {
+			handlers   map[string]Handler
+			catchall   Handler
+			hack       Hack // data for temporary hackery (see hack.go)
+			id         string
+			Stdout     io.Writer
+			Stderr     io.Writer
+			Stdin      io.Reader
+			Logging    bool
+			tasks      sync.WaitGroup
+			l          sync.RWMutex // lock for shutdown
+			shutdown   bool
+			onShutdown []func() // shutdown handlers
+		}
+		
+		type Handler func(*Job) Status
+		type Hack map[string]interface{}
+	
+   设置engine的信号捕获及处理方法
+        signal.Trap(eng.Shutdown)
+   加载builtins
+       if err := builtins.Register(eng); err != nil {
+		   log.Fatal(err)
+	   }
+       func Register(eng *engine.Engine) error {
+	       if err := daemon(eng); err != nil {
+		   return err
+	       }
+			if err := remote(eng); err != nil {
+				return err
+			}
+			if err := events.New().Install(eng); err != nil {
+				return err
+			}
+			if err := eng.Register("version", dockerVersion); err != nil {
+				return err
+			}
+			return registry.NewService().Install(eng)
+		}
+		
+		daemon(eng):
+		    eng.Register("init_networkdriver", bridge.InitDriver)   //github.com/docker/docker/daemon/networkdriver/bridge
+		  
+		    获取为Docker服务的网络设备的地址；
+            创建指定IP地址的网桥；
+            配置网络iptables规则；
+            为eng对象注册了多个Handler:
+			    		"allocate_interface": Allocate
+						"release_interface":  Release
+						"allocate_port":      AllocatePort
+						"link":               LinkContainers	
+		remote(eng):
+		   eng.Register("serveapi", apiserver.ServeApi)    //apiserver "github.com/docker/docker/api/server"
+		   eng.Register("acceptconnections", apiserver.AcceptConnections)
+		events.New().Install(eng):
+		    		"events":            e.Get,
+		            "log":               e.Log,
+		            "subscribers_count": e.SubscribersCount,
+					
+					type Events struct {
+	                  mu          sync.RWMutex
+	                  events      []*utils.JSONMessage
+	                  subscribers []listener
+                    }
+		    
+        eng.Register(“version”,dockerVersion):
+		    
+              
+		registry.NewService().Install(eng):
+				eng.Register("auth", s.Auth)
+	            eng.Register("search", s.Search)
+				
+				type Service struct {}
+				func NewService() *Service {
+				    return &Service{}
+				}			
+	         
+   使用goroutine加载daemon对象并运行
+		   type Daemon struct {
+				repository     string
+				sysInitPath    string
+				containers     *contStore
+				graph          *graph.Graph
+				repositories   *graph.TagStore
+				idIndex        *truncindex.TruncIndex
+				sysInfo        *sysinfo.SysInfo
+				volumes        *graph.Graph
+				eng            *engine.Engine
+				config         *Config
+				containerGraph *graphdb.Database
+				driver         graphdriver.Driver
+				execDriver     execdriver.Driver
+			}
+       通过init函数中初始化的daemonCfg与eng对象来创建一个daemon对象d
+	       d, err := daemon.NewDaemon(daemonCfg, eng)
+		   
+		   daemon, err := NewDaemonFromDirectory(config, eng)
+		   主要作用为初始化DockerDaemon的基本环境，如处理config参数，验证系统支持度，配置Docker工作目录，设置与加载多种driver，创建graph环境等，验证DNS配置等。
+	   
+	   通过daemon对象的Install函数，向eng对象中注册众多的Handler
+	       if err := d.Install(eng); err != nil {
+       在Docker Daemon启动完毕之后，运行名为”acceptconnections”的job
+           if err := eng.Job("acceptconnections").Run(); err != nil {
+   打印Docker版本及驱动信息
+   Job之”serveapi”的创建与运行	  

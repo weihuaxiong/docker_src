@@ -1,0 +1,10 @@
+1.Docker Client
+   1. Client 创建
+       解析cmd args
+	   处理args and 收集Client所需配置信息
+	   创建Docker Client
+	   
+   2. cmd 执行
+        解析args and获取相应reqeust type
+		如何执行具体request cmd , send it to server
+	
